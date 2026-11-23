@@ -1,111 +1,112 @@
 #!/usr/bin/env python3
-"""Entry program for the make.fun bounty "Sum up 23 November's world
-news in one image" (news-image-20261123).
+"""Publish the entered front page for make.fun's news-image bounty
+of Monday 23 November 2026.
 
-The picture itself is finished artwork stored next to this file: a
-1024x1024 newspaper front page, "THE WORLD IN ONE PAGE", drawn in
-code during the build session and committed to this repository.
-Running this program publishes that picture, unchanged, as
-entry.png in the output directory -- the one file the bounty
-asks for.
+The page itself — "THE WORLD IN ONE PAGE", a 1024x1024 newspaper
+front page holding 50 stories from 23 November 2026 — is finished
+artwork kept beside this file as entry.png. It was drawn in code
+while the entry was built. This program does not draw anything: it
+finds that stored picture, proves it is the picture that was
+entered, and publishes it unchanged as entry.png in the output
+directory the bounty names.
 
-Before anything is published, the source picture is checked
-against the SHA-256 fingerprint recorded below. If the bytes on
-disk are not the bytes that were entered, the program stops with
-an error instead of publishing the wrong picture.
+Two proofs run before anything is published. First, the picture's
+SHA-256 fingerprint must match the value recorded below; any other
+bytes stop the program instead of publishing the wrong picture.
+Second, the picture's PNG header must say it is a PNG no larger
+than 1024 by 1024, the size the bounty allows.
 
-The picture may sit in the repository under any of the names in
-SOURCE_NAMES: a phone upload does not always keep the name the
-file was given. The first name that exists and matches the
-fingerprint wins; the check makes the choice safe, because a
-wrong file cannot match it.
+The stored picture may carry any of the names in CANDIDATE_NAMES:
+a phone upload does not always keep the name a file was given.
+The fingerprint makes the choice safe — a wrong file cannot
+match it, whatever it is called.
 
-Only the Python standard library is used, so the program runs in
-the bare grading environment: no network, no installed packages.
+Nothing beyond the Python standard library is used, so the
+program runs in the bare grading environment: no network, no
+installed packages, no Pillow.
 """
 
 import hashlib
 import os
+import struct
 import sys
+from pathlib import Path
 
-# SHA-256 of the entered picture: "THE WORLD IN ONE PAGE --
-# Monday, November 23, 2026", 50 stories on one 1024x1024 page.
-EXPECTED_SHA256 = \
+# Fingerprint of the entered picture, "THE WORLD IN ONE PAGE —
+# Monday, November 23, 2026": 50 stories on one 1024x1024 page.
+PICTURE_SHA256 = (
     "ad96b2fb163adb10b472b272d7ed94dde5f1b2dd29729879a04469a930c735fb"
+)
 
-# Names the picture is allowed to carry in the repository, in the
-# order they are tried. The first one is the name the rules
-# suggest; the others are names a phone upload actually produced.
-SOURCE_NAMES = ("entry.png", "image (2).png", "image (1).png",
-                "image.png", "entry (1).png")
+# Names the picture may carry in this repository, tried in order.
+# The first is the name the bounty rules suggest; the rest are
+# names a phone upload has actually produced in the past.
+CANDIDATE_NAMES = (
+    "entry.png",
+    "image (2).png",
+    "image (1).png",
+    "image.png",
+    "entry (1).png",
+)
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+MAX_SIDE = 1024
 
 
-def sha256_of(path):
+def fingerprint(path):
     """Return the SHA-256 hex digest of the file at *path*."""
-    digest = hashlib.sha256()
     with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def find_source(directory):
-    """Return the path of the entered picture inside *directory*.
+def picture_dimensions(data):
+    """Return the (width, height) a PNG's header declares.
 
-    Every candidate name is tried in order. The first one that
-    exists and matches the recorded fingerprint is returned; a
-    candidate that exists but does not match is skipped with a
-    warning, because the next name may still be the right file.
-    Raises FileNotFoundError when no candidate matches.
+    The size lives in the IHDR chunk, right after the 8-byte PNG
+    signature and the chunk's length and type fields. Reading the
+    header is enough; the picture itself is never decoded.
     """
-    for name in SOURCE_NAMES:
-        candidate = os.path.join(directory, name)
-        if not os.path.isfile(candidate):
-            continue
-        if sha256_of(candidate) == EXPECTED_SHA256:
-            return candidate
-        print("warning: %s exists but is not the entered picture"
-              % name, file=sys.stderr)
-    # Last resort: any other PNG in the folder whose fingerprint
-    # matches. An upload name nobody foresaw must not sink the
-    # entry when the right bytes are sitting right there.
-    for name in sorted(os.listdir(directory)):
-        if not name.lower().endswith(".png"):
-            continue
-        if name in SOURCE_NAMES:
-            continue
-        candidate = os.path.join(directory, name)
-        if os.path.isfile(candidate) \
-                and sha256_of(candidate) == EXPECTED_SHA256:
-            print("note: the entered picture was found under the "
-                  "unexpected name %s" % name, file=sys.stderr)
-            return candidate
-    raise FileNotFoundError(
-        "no file matching the entered picture was found in %s"
-        % directory)
-
-
-def check_png_size(picture):
-    """Check the picture is a PNG no larger than 1024x1024.
-
-    The bounty allows at most 1024 by 1024 pixels. The PNG header
-    carries the size in its IHDR chunk, so this is a cheap read of
-    the first bytes, not a decode. A picture that is not a PNG, or
-    is over the size limit, must fail here rather than at judging.
-    """
-    if picture[:8] != b"\x89PNG\r\n\x1a\n":
+    if data[:8] != PNG_MAGIC:
         raise ValueError("the entered picture is not a PNG file")
-    if len(picture) < 33 or picture[12:16] != b"IHDR":
+    if len(data) < 33 or data[12:16] != b"IHDR":
         raise ValueError("the entered picture has no PNG header")
-    width = int.from_bytes(picture[16:20], "big")
-    height = int.from_bytes(picture[20:24], "big")
-    if width > 1024 or height > 1024:
-        raise ValueError("the entered picture is %dx%d, over the "
-                         "1024x1024 limit" % (width, height))
+    width, height = struct.unpack(">II", data[16:24])
     return width, height
 
 
-def output_path():
+def locate_picture(directory):
+    """Return the path of the entered picture inside *directory*.
+
+    Each candidate name is tried in turn. The first file that
+    exists and matches the recorded fingerprint wins; a file that
+    exists but fails the fingerprint is skipped with a warning,
+    because the next name may still be the right picture. When no
+    candidate matches, any other PNG in the folder is tried the
+    same way, so an upload name nobody foresaw does not sink the
+    entry while the right bytes are sitting right there.
+    """
+    folder = Path(directory)
+    for name in CANDIDATE_NAMES:
+        candidate = folder / name
+        if not candidate.is_file():
+            continue
+        if fingerprint(candidate) == PICTURE_SHA256:
+            return candidate
+        print("warning: %s is not the entered picture" % name,
+              file=sys.stderr)
+    for candidate in sorted(folder.glob("*.png")):
+        if candidate.name in CANDIDATE_NAMES:
+            continue
+        if candidate.is_file() \
+                and fingerprint(candidate) == PICTURE_SHA256:
+            print("note: the entered picture was found under the "
+                  "unexpected name %s" % candidate.name, file=sys.stderr)
+            return candidate
+    raise FileNotFoundError(
+        "the entered picture is not in %s" % directory)
+
+
+def publish_location():
     """Return where the picture must be published.
 
     The grader names the directory in MAKEFUN_OUTPUT_DIR; the
@@ -116,35 +117,44 @@ def output_path():
     if not out_dir and os.path.isdir("/output"):
         out_dir = "/output"
     if not out_dir:
-        out_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(out_dir, "entry.png")
+        out_dir = str(Path(__file__).resolve().parent)
+    return Path(out_dir) / "entry.png"
 
 
-def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    source = find_source(here)
+def publish():
+    here = Path(__file__).resolve().parent
+    source = locate_picture(here)
+    picture = source.read_bytes()
 
-    with open(source, "rb") as handle:
-        picture = handle.read()
+    width, height = picture_dimensions(picture)
+    if width > MAX_SIDE or height > MAX_SIDE:
+        raise ValueError("the entered picture is %dx%d, over the "
+                         "1024x1024 limit" % (width, height))
+    if hashlib.sha256(picture).hexdigest() != PICTURE_SHA256:
+        raise IOError("the bytes read do not match the entered "
+                      "picture")
 
-    width, height = check_png_size(picture)
-
-    target = output_path()
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    with open(target, "wb") as handle:
-        handle.write(picture)
+    target = publish_location()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(picture)
 
     # Read the published file back and check it once more. A short
     # or corrupted write must fail loudly here, not at judging time.
-    if sha256_of(target) != EXPECTED_SHA256:
+    if fingerprint(target) != PICTURE_SHA256:
         raise IOError("the published file does not match the "
                       "entered picture")
 
     print("published %s (%d bytes, %dx%d) to %s"
-          % (os.path.basename(source), len(picture), width, height,
-             target))
+          % (source.name, len(picture), width, height, target))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(publish())
+    except (FileNotFoundError, ValueError, IOError, OSError) as exc:
+        # A missing picture, a wrong fingerprint, or a failed write
+        # is an entry problem, not a crash: say so plainly and
+        # leave with a non-zero status instead of a traceback.
+        print("error: %s" % exc, file=sys.stderr)
+        sys.exit(1)
