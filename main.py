@@ -35,7 +35,7 @@ from pathlib import Path
 # Fingerprint of the entered picture, "THE WORLD IN ONE PAGE —
 # Monday, November 23, 2026": 50 stories on one 1024x1024 page.
 PICTURE_SHA256 = (
-    "ad96b2fb163adb10b472b272d7ed94dde5f1b2dd29729879a04469a930c735fb"
+    "26c996943b049d52f15c27fc3f77ba4f9e160a655b912df0e483c5db33320408"
 )
 
 # Names the picture may carry in this repository, tried in order.
